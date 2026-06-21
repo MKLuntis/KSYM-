@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顔ボールゲーム</title>
+<style>
+  :root {
+    --canvas-max-width: 400px;
+  }
+
+  body {
+    text-align: center;
+    background: #111;
+    color: white;
+    margin: 0;
+    font-family: system-ui, sans-serif;
+    overflow-x: hidden;
+  }
+
+  h1 {
+    margin: 14px 0 4px;
+    font-size: 50px;
+    color: #00ffff;
+    text-shadow:
+      0 0 10px #00ffff,
+      0 0 20px #00ffff,
+      0 0 40px #00ffff,
+      0 0 80px #00ffff;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin: 0 10px 8px;
+    line-height: 1.5;
+  }
+
+  canvas {
+    background: #222;
+    display: block;
+    margin: 10px auto;
+    touch-action: none;
+    image-rendering: auto;
+  }
+
+  #pauseMenu {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    padding: 20px;
+    border: 2px solid cyan;
+    z-index: 10;
+  }
+
+  #pauseMenu button {
+    margin: 10px;
+    padding: 10px 20px;
+    font-size: 18px;
+  }
+
+  #menu {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+  }
+
+  #menuImage {
+    pointer-events: none;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    image-rendering: pixelated;
+    filter: brightness(0.6);
+  }
+
+  .menuOverlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: min(90vw, 420px);
+  }
+
+  .menuTitle {
+    font-size: 60px;
+    color: #00ffff;
+    text-shadow:
+      0 0 10px #00ffff,
+      0 0 30px #00ffff,
+      0 0 60px #00ffff;
+    margin: 0;
+  }
+
+  .neonBtn {
+    margin-top: 20px;
+    padding: 15px 40px;
+    font-size: 24px;
+    color: #00ffff;
+    background: transparent;
+    border: 2px solid #00ffff;
+    cursor: pointer;
+    box-shadow:
+      0 0 10px #00ffff,
+      inset 0 0 10px #00ffff;
+  }
+
+  .neonBtn:hover {
+    background: #00ffff;
+    color: black;
+  }
+
+  @media (max-width: 600px) {
+    h1 {
+      font-size: 34px;
+      margin-top: 10px;
+    }
+
+    p {
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    canvas {
+      margin: 8px auto;
+    }
+
+    .menuTitle {
+      font-size: 42px;
+    }
+
+    .neonBtn {
+      font-size: 18px;
+      padding: 11px 22px;
+    }
+
+    #pauseMenu button {
+      font-size: 16px;
+      padding: 9px 16px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<h1>YMM GAME</h1>
+<p>PC: ← → キーで操作 / Shiftで高速移動 / Escで一時停止<br>スマホ: 画面をなぞって操作</p>
+
+<div id="menu">
+  <img src="menu.png" id="menuImage" alt="">
+  <div class="menuOverlay">
+    <h2 class="menuTitle">YMM GAME</h2>
+    <button id="playButton" class="neonBtn" type="button">PLAY</button>
+  </div>
+</div>
+
+<canvas id="game"></canvas>
+
+<div id="pauseMenu" style="display:none;">
+  <h2>PAUSE</h2>
+  <button id="resumeButton" type="button">続ける</button>
+  <button id="restartButton" type="button">リスタート</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const paddleWidth = 120;
+const paddleHeight = 18;
+const paddleCatchMargin = 28;
+const ballSpeedY = 3.2;
+const ballMaxSpeedX = 2.4;
+const ballMinSpeedX = 0.8;
+const boostMultiplier = 2.7;
+const obstacleGap = 18;
+const GAME_ASPECT = 2 / 3; // width / height = 400 / 600
+
+const bgmTracks = [
+  "bgm1.mp3",
+  "bgm2.mp3",
+  "bgm3.mp3",
+  "bgm4.mp3",
+  "bgm5.mp3"
+];
+
+const img = new Image();
+img.src = "face.jpg";
+
+const gameOverImg = new Image();
+gameOverImg.src = "gameover.png";
+
+const hitSound = new Audio("hit.mp3");
+hitSound.preload = "auto";
+hitSound.preservesPitch = false;
+hitSound.webkitPreservesPitch = false;
+
+const bgmAudio = new Audio();
+bgmAudio.preload = "auto";
+bgmAudio.loop = false;
+bgmAudio.volume = 1;
+
+let gameOverAudio = new Audio("gameover.mp3");
+gameOverAudio.preload = "auto";
+
+let paddleX = 150;
+let paddleY = 0;
+let balls = [];
+let obstacles = [];
+let stage = 1;
+let lastStageScore = 0;
+let score = 0;
+let displayScore = 0;
+let gameOver = false;
+let isPaused = false;
+let isMenu = true;
+let left = false;
+let right = false;
+let isFast = false;
+let currentBgmIndex = -1;
+let gameOverSoundPlayed = false;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resizeCanvas() {
+  const maxWidth = 400;
+  const minWidth = 280;
+  const viewportWidth = window.innerWidth * 0.95;
+  const topUiHeight = (document.querySelector("h1")?.getBoundingClientRect().height || 0) +
+                      (document.querySelector("p")?.getBoundingClientRect().height || 0);
+  const safeHeight = Math.max(320, window.innerHeight - topUiHeight - 34);
+
+  let width = Math.min(maxWidth, viewportWidth, safeHeight * GAME_ASPECT);
+  width = Math.max(minWidth, Math.floor(width));
+
+  let height = Math.round(width / GAME_ASPECT);
+  if (height > safeHeight) {
+    height = Math.floor(safeHeight);
+    width = Math.round(height * GAME_ASPECT);
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  canvas.style.width = width + "px";
+  canvas.style.height = height + "px";
+
+  paddleY = canvas.height - 80;
+  paddleX = clamp(paddleX, 0, canvas.width - paddleWidth);
+}
+
+function ballSize() {
+  return canvas.width < 500 ? 60 : 80;
+}
+
+function randomX(width) {
+  return Math.random() * Math.max(1, canvas.width - width);
+}
+
+function currentYSpeed(ball) {
+  return ballSpeedY * ball.speedMultiplier;
+}
+
+function currentMaxXSpeed(ball) {
+  return ballMaxSpeedX * ball.speedMultiplier;
+}
+
+function currentMinXSpeed(ball) {
+  return ballMinSpeedX * ball.speedMultiplier;
+}
+
+function normalizeXSpeedForBall(ball, vx) {
+  if (Math.abs(vx) < currentMinXSpeed(ball)) {
+    return vx < 0 ? -currentMinXSpeed(ball) : currentMinXSpeed(ball);
+  }
+  return clamp(vx, -currentMaxXSpeed(ball), currentMaxXSpeed(ball));
+}
+
+function keepBallSpeed(ball) {
+  ball.vx = normalizeXSpeedForBall(ball, ball.vx);
+  ball.vy = ball.vy < 0 ? -currentYSpeed(ball) : currentYSpeed(ball);
+}
+
+function applyBoost(ball) {
+  ball.speedMultiplier = boostMultiplier;
+  keepBallSpeed(ball);
+}
+
+function resetBallSpeed(ball) {
+  ball.speedMultiplier = 1;
+  keepBallSpeed(ball);
+}
+
+function createBall() {
+  const size = ballSize();
+  const ball = {
+    x: randomX(size),
+    y: 100,
+    prevY: 100,
+    vx: Math.random() * 2 - 1,
+    vy: ballSpeedY,
+    speedMultiplier: 1,
+    hitLock: false
+  };
+  keepBallSpeed(ball);
+  return ball;
+}
+
+function rectsOverlap(a, b, gap) {
+  return !(
+    a.x + a.width + gap < b.x ||
+    a.x > b.x + b.width + gap ||
+    a.y + a.height + gap < b.y ||
+    a.y > b.y + b.height + gap
+  );
+}
+
+function makeObstacle(type) {
+  const width = type === "boost" ? 78 : 64;
+  const height = 20;
+  const minY = 70;
+  const maxY = Math.max(minY, canvas.height - 230);
+
+  for (let attempt = 0; attempt < 180; attempt++) {
+    const candidate = {
+      type,
+      x: randomX(width),
+      y: minY + Math.random() * (maxY - minY),
+      width,
+      height
+    };
+
+    if (!obstacles.some(obs => rectsOverlap(candidate, obs, obstacleGap))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function createObstacles() {
+  obstacles = [];
+  let attempts = 0;
+
+  while (obstacles.length < stage && attempts < stage * 220) {
+    const type = obstacles.length === 0 ? "boost" : (Math.random() < 0.35 ? "boost" : "normal");
+    const obstacle = makeObstacle(type);
+    if (obstacle) obstacles.push(obstacle);
+    attempts++;
+  }
+}
+
+function addObstacle() {
+  const type = Math.random() < 0.35 ? "boost" : "normal";
+  const obstacle = makeObstacle(type);
+  if (obstacle) obstacles.push(obstacle);
+}
+
+function chooseRandomBgmIndex() {
+  if (bgmTracks.length === 1) return 0;
+  let nextIndex;
+  do {
+    nextIndex = Math.floor(Math.random() * bgmTracks.length);
+  } while (nextIndex === currentBgmIndex);
+  return nextIndex;
+}
+
+function stopBgm() {
+  try {
+    bgmAudio.pause();
+    bgmAudio.currentTime = 0;
+    bgmAudio.removeAttribute("src");
+    bgmAudio.load();
+  } catch (error) {}
+}
+
+function playRandomBgm() {
+  currentBgmIndex = chooseRandomBgmIndex();
+  try { bgmAudio.pause(); } catch(e) {}
+  bgmAudio.src = bgmTracks[currentBgmIndex] + '?v=' + Date.now();
+  bgmAudio.currentTime = 0;
+  const p = bgmAudio.play();
+  if (p) p.catch(()=>{});
+}
+
+function stopGameOverSound() {
+  try {
+    gameOverAudio.pause();
+    gameOverAudio.currentTime = 0;
+    gameOverAudio.removeAttribute("src");
+    gameOverAudio.load();
+  } catch (error) {}
+}
+
+function playGameOverSoundOnce() {
+  if (gameOverSoundPlayed) return;
+  gameOverSoundPlayed = true;
+
+  stopGameOverSound();
+  gameOverAudio.src = "gameover.mp3";
+  gameOverAudio.load();
+  gameOverAudio.play().catch(() => {});
+}
+
+const stateEnum = {
+  MENU: "menu",
+  PLAYING: "playing",
+  PAUSED: "paused",
+  GAMEOVER: "gameover"
+};
+
+bgmAudio.addEventListener("ended", () => {
+  if (state === stateEnum.PLAYING) {
+    playRandomBgm();
+  }
+});
+
+let state = stateEnum.MENU;
+
+function setGameOver() {
+  if (gameOver) return;
+
+  gameOver = true;
+  state = stateEnum.GAMEOVER;
+  stopBgm();
+  playGameOverSoundOnce();
+}
+
+function playHitSound() {
+  const semitone = Math.floor(score / 10) * 3;
+  const pitchRate = Math.pow(2, semitone / 12);
+
+  hitSound.pause();
+  hitSound.currentTime = 0;
+  hitSound.playbackRate = pitchRate;
+  hitSound.play().catch(() => {});
+}
+
+function resetGame() {
+  resizeCanvas();
+  balls = [createBall()];
+  score = 0;
+  displayScore = 0;
+  gameOver = false;
+  gameOverSoundPlayed = false;
+  stage = 1;
+  lastStageScore = 0;
+  isPaused = false;
+  createObstacles();
+  paddleX = (canvas.width - paddleWidth) / 2;
+  stopGameOverSound();
+}
+
+function startGame() {
+  document.getElementById("menu").style.display = "none";
+  document.getElementById("pauseMenu").style.display = "none";
+  state = stateEnum.PLAYING;
+  isMenu = false;
+  resetGame();
+  playRandomBgm();
+}
+
+function resumeGame() {
+  if (state !== stateEnum.PAUSED) return;
+  state = stateEnum.PLAYING;
+  isPaused = false;
+  document.getElementById("pauseMenu").style.display = "none";
+  if (!bgmAudio.src) {
+    playRandomBgm();
+  } else {
+    bgmAudio.play().catch(() => {});
+  }
+}
+
+function restartGame() {
+  document.getElementById("pauseMenu").style.display = "none";
+  state = stateEnum.PLAYING;
+  isPaused = false;
+  resetGame();
+  playRandomBgm();
+}
+
+function returnToMenu() {
+  state = stateEnum.MENU;
+  isMenu = true;
+  isPaused = false;
+  document.getElementById("menu").style.display = "block";
+  document.getElementById("pauseMenu").style.display = "none";
+  stopBgm();
+  stopGameOverSound();
+}
+
+document.getElementById("playButton").addEventListener("click", startGame);
+document.getElementById("resumeButton").addEventListener("click", resumeGame);
+document.getElementById("restartButton").addEventListener("click", restartGame);
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") left = true;
+  if (e.key === "ArrowRight") right = true;
+  if (e.key === "Shift") isFast = true;
+
+  if (e.key === "Escape" && state === stateEnum.PLAYING) {
+    state = stateEnum.PAUSED;
+    isPaused = true;
+    document.getElementById("pauseMenu").style.display = "block";
+    stopBgm();
+  }
+
+  if (e.code === "Space" && state === stateEnum.GAMEOVER) {
+    restartGame();
+  }
+});
+
+document.addEventListener("keyup", e => {
+  if (e.key === "ArrowLeft") left = false;
+  if (e.key === "ArrowRight") right = false;
+  if (e.key === "Shift") isFast = false;
+});
+
+function movePaddleToClientX(clientX) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const x = (clientX - rect.left) * scaleX;
+  paddleX = clamp(x - paddleWidth / 2, 0, canvas.width - paddleWidth);
+}
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  if (state === stateEnum.MENU) return;
+  movePaddleToClientX(e.touches[0].clientX);
+}, { passive: false });
+
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  if (state === stateEnum.MENU) return;
+  movePaddleToClientX(e.touches[0].clientX);
+}, { passive: false });
+
+canvas.addEventListener("mousemove", e => {
+  if (e.buttons === 1 && state === stateEnum.PLAYING) {
+    movePaddleToClientX(e.clientX);
+  }
+});
+
+canvas.addEventListener("click", () => {
+  if (state === stateEnum.GAMEOVER) {
+    returnToMenu();
+  }
+});
+
+function hitPaddle(ball, size) {
+  const previousBottom = ball.prevY + size;
+  const currentBottom = ball.y + size;
+  const crossedPaddleTop = previousBottom <= paddleY + paddleCatchMargin && currentBottom >= paddleY;
+  const horizontallyInside =
+    ball.x + size >= paddleX - paddleCatchMargin &&
+    ball.x <= paddleX + paddleWidth + paddleCatchMargin;
+  const notTooLow = ball.y <= paddleY + paddleHeight + paddleCatchMargin;
+
+  return !ball.hitLock && ball.vy > 0 && crossedPaddleTop && horizontallyInside && notTooLow;
+}
+
+function bounceBalls(size) {
+  const minDistance = size;
+
+  for (let i = 0; i < balls.length; i++) {
+    for (let j = i + 1; j < balls.length; j++) {
+      const a = balls[i];
+      const b = balls[j];
+      const ax = a.x + size / 2;
+      const ay = a.y + size / 2;
+      const bx = b.x + size / 2;
+      const by = b.y + size / 2;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const distance = Math.hypot(dx, dy);
+
+      if (distance <= 0 || distance >= minDistance) continue;
+
+      const overlap = minDistance - distance;
+      const nx = dx / distance;
+      const ny = dy / distance;
+
+      a.x -= nx * overlap / 2;
+      a.y -= ny * overlap / 2;
+      b.x += nx * overlap / 2;
+      b.y += ny * overlap / 2;
+
+      if (Math.abs(nx) > Math.abs(ny)) {
+        a.vx = nx > 0 ? -Math.abs(a.vx) : Math.abs(a.vx);
+        b.vx = nx > 0 ? Math.abs(b.vx) : -Math.abs(b.vx);
+      } else {
+        a.vy = ny > 0 ? -currentYSpeed(a) : currentYSpeed(a);
+        b.vy = ny > 0 ? currentYSpeed(b) : -currentYSpeed(b);
+      }
+
+      keepBallSpeed(a);
+      keepBallSpeed(b);
+
+      a.x = clamp(a.x, 0, canvas.width - size);
+      b.x = clamp(b.x, 0, canvas.width - size);
+    }
+  }
+}
+
+function update() {
+  if (state !== stateEnum.PLAYING) return;
+
+  const size = ballSize();
+  const paddleSpeed = isFast ? 12 : 6;
+
+  if (left) paddleX -= paddleSpeed;
+  if (right) paddleX += paddleSpeed;
+  paddleX = clamp(paddleX, 0, canvas.width - paddleWidth);
+
+  balls.forEach(ball => {
+    ball.prevY = ball.y;
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    if (ball.x < 0) {
+      ball.x = 0;
+      ball.vx = Math.abs(ball.vx);
+    }
+    if (ball.x + size > canvas.width) {
+      ball.x = canvas.width - size;
+      ball.vx = -Math.abs(ball.vx);
+    }
+    if (ball.y < 0) {
+      ball.y = 0;
+      ball.vy = currentYSpeed(ball);
+    }
+
+    keepBallSpeed(ball);
+
+    obstacles.forEach(obs => {
+      if (
+        ball.x < obs.x + obs.width &&
+        ball.x + size > obs.x &&
+        ball.y < obs.y + obs.height &&
+        ball.y + size > obs.y
+      ) {
+        const overlapX = ball.x + size / 2 - (obs.x + obs.width / 2);
+        const overlapY = ball.y + size / 2 - (obs.y + obs.height / 2);
+
+        if (Math.abs(overlapX) > Math.abs(overlapY)) {
+          ball.x = overlapX > 0 ? obs.x + obs.width : obs.x - size;
+          ball.vx = overlapX > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
+        } else {
+          ball.y = overlapY > 0 ? obs.y + obs.height : obs.y - size;
+          ball.vy = overlapY > 0 ? currentYSpeed(ball) : -currentYSpeed(ball);
+        }
+
+        if (obs.type === "boost") {
+          applyBoost(ball);
+        } else {
+          keepBallSpeed(ball);
+        }
+      }
+    });
+  });
+
+  bounceBalls(size);
+
+  balls.forEach(ball => {
+    if (hitPaddle(ball, size)) {
+      resetBallSpeed(ball);
+      ball.y = paddleY - size;
+      ball.vy = -currentYSpeed(ball);
+
+      const hitPos = ball.x + size / 2 - (paddleX + paddleWidth / 2);
+      ball.vx = normalizeXSpeedForBall(ball, ball.vx + hitPos * 0.012);
+
+      score++;
+      ball.hitLock = true;
+      playHitSound();
+
+      if (score % 10 === 0 && score !== lastStageScore) {
+        stage++;
+        lastStageScore = score;
+        addObstacle();
+      }
+
+      if (score > 4 && balls.length < 3 && Math.random() < 0.25) {
+        balls.push(createBall());
+      }
+    }
+
+    if (ball.y + size < paddleY - 20) {
+      ball.hitLock = false;
+    }
+
+    if (ball.y > canvas.height) {
+      setGameOver();
+    }
+  });
+
+  displayScore += (score - displayScore) * 0.2;
+}
+
+function drawGameOverOverlay() {
+  ctx.save();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (gameOverImg.complete && gameOverImg.naturalWidth > 0) {
+    ctx.drawImage(gameOverImg, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = "rgba(20, 0, 0, 0.85)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.fillStyle = "white";
+  ctx.textAlign = "center";
+  ctx.shadowColor = "black";
+  ctx.shadowBlur = 8;
+  ctx.font = "bold 42px sans-serif";
+  ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 30);
+  ctx.font = "24px sans-serif";
+  ctx.fillText("Space で戻る", canvas.width / 2, canvas.height / 2 + 18);
+  ctx.font = "30px sans-serif";
+  ctx.fillText("Score: " + score, canvas.width / 2, canvas.height / 2 + 70);
+  ctx.restore();
+  ctx.textAlign = "start";
+}
+
+function drawAudioTowers() {
+  const segments = 22;
+  const gap = 3;
+  const towerX = 8;
+  const maxWidth = 36;
+  const segmentHeight = Math.max(5, (canvas.height - 130) / segments - gap);
+  const bottom = canvas.height - 28;
+  const now = performance.now() / 1000;
+
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+
+  for (let i = 0; i < segments; i++) {
+    const t = i / (segments - 1);
+    const pulse = clamp(0.45 + Math.sin(now * 3.2 + i * 0.7) * 0.22, 0.08, 1);
+    const barWidth = 8 + pulse * maxWidth;
+    const y = bottom - i * (segmentHeight + gap);
+
+    const yellow = [255, 244, 54];
+    const orange = [255, 136, 0];
+    const green = [166, 255, 0];
+    const from = t < 0.5 ? yellow : orange;
+    const to = t < 0.5 ? orange : green;
+    const amount = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5;
+    const r = Math.round(from[0] + (to[0] - from[0]) * amount);
+    const g = Math.round(from[1] + (to[1] - from[1]) * amount);
+    const b = Math.round(from[2] + (to[2] - from[2]) * amount);
+    const color = `rgb(${r}, ${g}, ${b})`;
+
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10 + pulse * 10;
+    ctx.fillRect(towerX, y, barWidth, segmentHeight);
+    ctx.fillRect(canvas.width - towerX - barWidth, y, barWidth, segmentHeight);
+  }
+
+  ctx.restore();
+  ctx.shadowBlur = 0;
+}
+
+function drawObstacle(obs) {
+  if (obs.type === "boost") {
+    const gradient = ctx.createLinearGradient(obs.x, obs.y, obs.x + obs.width, obs.y);
+    gradient.addColorStop(0, "#fff436");
+    gradient.addColorStop(0.5, "#ff8a00");
+    gradient.addColorStop(1, "#a6ff00");
+
+    ctx.save();
+    ctx.shadowColor = "#fff436";
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = gradient;
+    ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+    ctx.restore();
+    return;
+  }
+
+  ctx.fillStyle = "red";
+  ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+}
+
+
+function drawRollingScore(x, y, value) {
+  const text = String(Math.floor(value));
+  const digitHeight = 24;
+  const digitWidth = 18;
+  const windowHeight = 28;
+  const windowTop = y - windowHeight / 2;
+  const baseLine = y + 1;
+
+  ctx.save();
+  ctx.fillStyle = "#a020f0";
+  ctx.shadowColor = "#a020f0";
+  ctx.shadowBlur = 20;
+  ctx.font = "24px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (let i = 0; i < text.length; i++) {
+    const place = text.length - i - 1;
+    const placeValue = Math.pow(10, place);
+    const scaled = value / placeValue;
+    const whole = Math.floor(scaled);
+    const frac = scaled - whole;
+    const currentDigit = ((whole % 10) + 10) % 10;
+
+    const xPos = x + i * digitWidth;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xPos - digitWidth / 2 - 1, windowTop, digitWidth + 2, windowHeight);
+    ctx.clip();
+
+    for (let n = -1; n <= 1; n++) {
+      const digit = (currentDigit + n + 10) % 10;
+      const yPos = baseLine + (n - frac) * digitHeight;
+      ctx.fillText(String(digit), xPos, yPos);
+    }
+
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (state === stateEnum.MENU) {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  ctx.fillStyle = stage % 2 === 0 ? "#003" : "#300";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawAudioTowers();
+
+  const size = ballSize();
+  balls.forEach(ball => {
+    if (ball.speedMultiplier > 1) {
+      ctx.save();
+      ctx.shadowColor = "#fff436";
+      ctx.shadowBlur = 22;
+      ctx.drawImage(img, ball.x, ball.y, size, size);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, ball.x, ball.y, size, size);
+    }
+  });
+
+  obstacles.forEach(drawObstacle);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(paddleX, paddleY, paddleWidth, paddleHeight);
+
+  ctx.fillStyle = "#a020f0";
+  ctx.shadowColor = "#a020f0";
+  ctx.shadowBlur = 20;
+  ctx.font = "24px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Score:", 10, 40);
+  drawRollingScore(90, 40, displayScore);
+  ctx.shadowBlur = 0;
+
+  if (state === stateEnum.GAMEOVER) {
+    drawGameOverOverlay();
+  }
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener("resize", () => {
+  resizeCanvas();
+});
+
+resizeCanvas();
+document.getElementById("menu").style.display = "block";
+gameLoop();
+</script>
+
+</body>
+</html>
