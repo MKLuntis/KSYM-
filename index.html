@@ -60,6 +60,84 @@
     font-size: 18px;
   }
 
+  #gameOverMenu {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    display: none;
+    pointer-events: none;
+  }
+
+  .gameOverPanel {
+    position: absolute;
+    left: 50%;
+    top: 71%;
+    transform: translate(-50%, -50%);
+    width: min(88vw, 360px);
+    padding: 10px 10px 12px;
+    border-radius: 18px;
+    background: rgba(5, 5, 18, 0.22);
+    backdrop-filter: blur(2px);
+    box-shadow:
+      0 0 16px rgba(160, 32, 240, 0.28),
+      0 0 18px rgba(0, 216, 255, 0.22);
+    pointer-events: auto;
+  }
+
+  .gameOverButtons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .gameOverBtn {
+    appearance: none;
+    border: 0;
+    border-radius: 14px;
+    padding: 10px 12px;
+    font-size: 16px;
+    font-weight: 700;
+    color: white;
+    background: linear-gradient(135deg, #a020f0 0%, #00d8ff 52%, #ff4fd8 100%);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.2) inset,
+      0 0 14px rgba(0, 216, 255, 0.38),
+      0 0 14px rgba(160, 32, 240, 0.38);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    min-height: 44px;
+  }
+
+  .gameOverBtn.secondary {
+    background: linear-gradient(135deg, #00d8ff 0%, #a020f0 52%, #18ff90 100%);
+  }
+
+  .gameOverBtn:active {
+    transform: translateY(1px) scale(0.99);
+    filter: brightness(1.05);
+  }
+
+  @media (max-width: 600px) {
+    .gameOverPanel {
+      width: min(90vw, 320px);
+      top: 73%;
+      padding: 8px 8px 10px;
+      border-radius: 16px;
+    }
+
+    .gameOverButtons {
+      gap: 8px;
+    }
+
+    .gameOverBtn {
+      font-size: 14px;
+      padding: 9px 10px;
+      border-radius: 12px;
+      min-height: 40px;
+    }
+  }
+
   #menu {
     position: fixed;
     inset: 0;
@@ -164,6 +242,15 @@
   <button id="restartButton" type="button">リスタート</button>
 </div>
 
+<div id="gameOverMenu" aria-hidden="true">
+  <div class="gameOverPanel">
+    <div class="gameOverButtons">
+      <button id="menuReturnButton" class="gameOverBtn secondary" type="button">メニューへ戻る</button>
+      <button id="gameOverRestartButton" class="gameOverBtn" type="button">リスタート</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -221,9 +308,58 @@ let right = false;
 let isFast = false;
 let currentBgmIndex = -1;
 let gameOverSoundPlayed = false;
+let angleObstacleCount = 0;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function expandRect(rect, amount) {
+  return {
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2
+  };
+}
+
+function sweptPointVsRect(x1, y1, x2, y2, rect) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  let txEntry, txExit, tyEntry, tyExit;
+
+  if (dx === 0) {
+    if (x1 < rect.x || x1 > rect.x + rect.width) return null;
+    txEntry = -Infinity;
+    txExit = Infinity;
+  } else {
+    const tx1 = (rect.x - x1) / dx;
+    const tx2 = (rect.x + rect.width - x1) / dx;
+    txEntry = Math.min(tx1, tx2);
+    txExit = Math.max(tx1, tx2);
+  }
+
+  if (dy === 0) {
+    if (y1 < rect.y || y1 > rect.y + rect.height) return null;
+    tyEntry = -Infinity;
+    tyExit = Infinity;
+  } else {
+    const ty1 = (rect.y - y1) / dy;
+    const ty2 = (rect.y + rect.height - y1) / dy;
+    tyEntry = Math.min(ty1, ty2);
+    tyExit = Math.max(ty1, ty2);
+  }
+
+  const entryTime = Math.max(txEntry, tyEntry);
+  const exitTime = Math.min(txExit, tyExit);
+
+  if (entryTime > exitTime || entryTime < 0 || entryTime > 1) return null;
+
+  if (txEntry > tyEntry) {
+    return { time: entryTime, normalX: dx > 0 ? -1 : 1, normalY: 0 };
+  }
+  return { time: entryTime, normalX: 0, normalY: dy > 0 ? -1 : 1 };
 }
 
 function resizeCanvas() {
@@ -319,7 +455,7 @@ function rectsOverlap(a, b, gap) {
 }
 
 function makeObstacle(type) {
-  const width = type === "boost" ? 78 : 64;
+  const width = type === "boost" ? 78 : (type === "angle" ? 70 : 64);
   const height = 20;
   const minY = 70;
   const maxY = Math.max(minY, canvas.height - 230);
@@ -356,6 +492,17 @@ function addObstacle() {
   const type = Math.random() < 0.35 ? "boost" : "normal";
   const obstacle = makeObstacle(type);
   if (obstacle) obstacles.push(obstacle);
+}
+
+function spawnAngleObstacle() {
+  if (score < 15 || angleObstacleCount >= 2) return;
+  if (Math.random() < 0.28) {
+    const obstacle = makeObstacle("angle");
+    if (obstacle) {
+      obstacles.push(obstacle);
+      angleObstacleCount++;
+    }
+  }
 }
 
 function chooseRandomBgmIndex() {
@@ -419,6 +566,19 @@ bgmAudio.addEventListener("ended", () => {
 
 let state = stateEnum.MENU;
 
+function showGameOverMenu() {
+  const el = document.getElementById("gameOverMenu");
+  el.style.display = "block";
+  el.setAttribute("aria-hidden", "false");
+}
+
+function hideGameOverMenu() {
+  const el = document.getElementById("gameOverMenu");
+  el.style.display = "none";
+  el.setAttribute("aria-hidden", "true");
+}
+
+
 function setGameOver() {
   if (gameOver) return;
 
@@ -426,6 +586,7 @@ function setGameOver() {
   state = stateEnum.GAMEOVER;
   stopBgm();
   playGameOverSoundOnce();
+  showGameOverMenu();
 }
 
 function playHitSound() {
@@ -447,6 +608,7 @@ function resetGame() {
   gameOverSoundPlayed = false;
   stage = 1;
   lastStageScore = 0;
+  angleObstacleCount = 0;
   isPaused = false;
   createObstacles();
   paddleX = (canvas.width - paddleWidth) / 2;
@@ -456,6 +618,7 @@ function resetGame() {
 function startGame() {
   document.getElementById("menu").style.display = "none";
   document.getElementById("pauseMenu").style.display = "none";
+  hideGameOverMenu();
   state = stateEnum.PLAYING;
   isMenu = false;
   resetGame();
@@ -476,6 +639,7 @@ function resumeGame() {
 
 function restartGame() {
   document.getElementById("pauseMenu").style.display = "none";
+  hideGameOverMenu();
   state = stateEnum.PLAYING;
   isPaused = false;
   resetGame();
@@ -488,6 +652,7 @@ function returnToMenu() {
   isPaused = false;
   document.getElementById("menu").style.display = "block";
   document.getElementById("pauseMenu").style.display = "none";
+  hideGameOverMenu();
   stopBgm();
   stopGameOverSound();
 }
@@ -495,6 +660,8 @@ function returnToMenu() {
 document.getElementById("playButton").addEventListener("click", startGame);
 document.getElementById("resumeButton").addEventListener("click", resumeGame);
 document.getElementById("restartButton").addEventListener("click", restartGame);
+document.getElementById("menuReturnButton").addEventListener("click", returnToMenu);
+document.getElementById("gameOverRestartButton").addEventListener("click", restartGame);
 
 document.addEventListener("keydown", e => {
   if (e.key === "ArrowLeft") left = true;
@@ -605,6 +772,7 @@ function bounceBalls(size) {
   }
 }
 
+
 function update() {
   if (state !== stateEnum.PLAYING) return;
 
@@ -616,7 +784,14 @@ function update() {
   paddleX = clamp(paddleX, 0, canvas.width - paddleWidth);
 
   balls.forEach(ball => {
-    ball.prevY = ball.y;
+    const prevX = ball.x;
+    const prevY = ball.y;
+    const prevCx = prevX + size / 2;
+    const prevCy = prevY + size / 2;
+
+    ball.prevX = prevX;
+    ball.prevY = prevY;
+
     ball.x += ball.vx;
     ball.y += ball.vy;
 
@@ -635,37 +810,68 @@ function update() {
 
     keepBallSpeed(ball);
 
+    let currCx = ball.x + size / 2;
+    let currCy = ball.y + size / 2;
+
     obstacles.forEach(obs => {
-      if (
+      const expandedObs = expandRect(obs, size / 2);
+      const sweptHit = sweptPointVsRect(prevCx, prevCy, currCx, currCy, expandedObs);
+      const overlapsNow =
         ball.x < obs.x + obs.width &&
         ball.x + size > obs.x &&
         ball.y < obs.y + obs.height &&
-        ball.y + size > obs.y
-      ) {
-        const overlapX = ball.x + size / 2 - (obs.x + obs.width / 2);
-        const overlapY = ball.y + size / 2 - (obs.y + obs.height / 2);
+        ball.y + size > obs.y;
 
-        if (Math.abs(overlapX) > Math.abs(overlapY)) {
-          ball.x = overlapX > 0 ? obs.x + obs.width : obs.x - size;
-          ball.vx = overlapX > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
-        } else {
-          ball.y = overlapY > 0 ? obs.y + obs.height : obs.y - size;
-          ball.vy = overlapY > 0 ? currentYSpeed(ball) : -currentYSpeed(ball);
-        }
+      if (!sweptHit && !overlapsNow) return;
 
-        if (obs.type === "boost") {
-          applyBoost(ball);
+      const overlapX = currCx - (obs.x + obs.width / 2);
+      const overlapY = currCy - (obs.y + obs.height / 2);
+
+      if (sweptHit) {
+        if (sweptHit.normalX !== 0) {
+          ball.x = sweptHit.normalX > 0 ? obs.x + obs.width : obs.x - size;
+          ball.vx = sweptHit.normalX > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
         } else {
-          keepBallSpeed(ball);
+          ball.y = sweptHit.normalY > 0 ? obs.y + obs.height : obs.y - size;
+          ball.vy = sweptHit.normalY > 0 ? Math.abs(ball.vy) : -Math.abs(ball.vy);
         }
+      } else if (Math.abs(overlapX) > Math.abs(overlapY)) {
+        ball.x = overlapX > 0 ? obs.x + obs.width : obs.x - size;
+        ball.vx = overlapX > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
+      } else {
+        ball.y = overlapY > 0 ? obs.y + obs.height : obs.y - size;
+        ball.vy = overlapY > 0 ? Math.abs(ball.vy) : -Math.abs(ball.vy);
       }
+
+      if (obs.type === "boost") {
+        applyBoost(ball);
+      } else if (obs.type === "angle") {
+        const randomDirX = Math.random() < 0.5 ? -1 : 1;
+        const randomDirY = Math.random() < 0.8 ? -1 : 1;
+
+        ball.vx = randomDirX * (currentMinXSpeed(ball) + Math.random() * (currentMaxXSpeed(ball) - currentMinXSpeed(ball)));
+        ball.vy = randomDirY * currentYSpeed(ball);
+        keepBallSpeed(ball);
+      } else {
+        keepBallSpeed(ball);
+      }
+
+      currCx = ball.x + size / 2;
+      currCy = ball.y + size / 2;
     });
-  });
 
-  bounceBalls(size);
+    const paddleRect = expandRect(
+      { x: paddleX, y: paddleY, width: paddleWidth, height: paddleHeight },
+      paddleCatchMargin + size / 2
+    );
+    const paddleHit = sweptPointVsRect(prevCx, prevCy, currCx, currCy, paddleRect);
 
-  balls.forEach(ball => {
-    if (hitPaddle(ball, size)) {
+    if (
+      !ball.hitLock &&
+      ball.vy > 0 &&
+      paddleHit &&
+      prevCy + size / 2 <= paddleY + paddleCatchMargin + size / 2
+    ) {
       resetBallSpeed(ball);
       ball.y = paddleY - size;
       ball.vy = -currentYSpeed(ball);
@@ -686,6 +892,8 @@ function update() {
       if (score > 4 && balls.length < 3 && Math.random() < 0.25) {
         balls.push(createBall());
       }
+
+      spawnAngleObstacle();
     }
 
     if (ball.y + size < paddleY - 20) {
@@ -697,12 +905,14 @@ function update() {
     }
   });
 
+  bounceBalls(size);
+
   displayScore += (score - displayScore) * 0.2;
 }
 
 function drawGameOverOverlay() {
   ctx.save();
-  ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+  ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (gameOverImg.complete && gameOverImg.naturalWidth > 0) {
@@ -712,18 +922,7 @@ function drawGameOverOverlay() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  ctx.fillStyle = "white";
-  ctx.textAlign = "center";
-  ctx.shadowColor = "black";
-  ctx.shadowBlur = 8;
-  ctx.font = "bold 42px sans-serif";
-  ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 30);
-  ctx.font = "24px sans-serif";
-  ctx.fillText("Space で戻る", canvas.width / 2, canvas.height / 2 + 18);
-  ctx.font = "30px sans-serif";
-  ctx.fillText("Score: " + score, canvas.width / 2, canvas.height / 2 + 70);
   ctx.restore();
-  ctx.textAlign = "start";
 }
 
 function drawAudioTowers() {
@@ -776,6 +975,21 @@ function drawObstacle(obs) {
     ctx.save();
     ctx.shadowColor = "#fff436";
     ctx.shadowBlur = 18;
+    ctx.fillStyle = gradient;
+    ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+    ctx.restore();
+    return;
+  }
+
+  if (obs.type === "angle") {
+    const gradient = ctx.createLinearGradient(obs.x, obs.y, obs.x + obs.width, obs.y);
+    gradient.addColorStop(0, "#082c14");
+    gradient.addColorStop(0.5, "#0c4a22");
+    gradient.addColorStop(1, "#0f6a31");
+
+    ctx.save();
+    ctx.shadowColor = "#1cff6a";
+    ctx.shadowBlur = 16;
     ctx.fillStyle = gradient;
     ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
     ctx.restore();
